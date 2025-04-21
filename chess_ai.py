@@ -104,16 +104,34 @@ CHECKMATE_SCORE = 10000
 STALEMATE_SCORE = 0
 DEPTH = 3
 
+def find_random_move(valid_moves):
+    return random.choice(valid_moves)
+
 def find_best_move(game_state, valid_moves, return_queue=None):
     """
     Tìm nước đi tốt nhất sử dụng thuật toán alpha-beta.
     """
-    global next_move
+    global next_move, position_history
     next_move = None
+    # Reset lịch sử vị trí khi tìm nước đi mới
+    position_history = {}
     random.shuffle(valid_moves)
     
+     # Tính tổng vật liệu để xác định giai đoạn của game
+    total_material = 0
+    for row in range(8):
+        for col in range(8):
+            piece = game_state.board[row][col]
+            if piece != "--" and piece[1] != 'K':
+                total_material += piece_values[piece[1]]
+    
+    # Điều chỉnh độ sâu tìm kiếm dựa trên giai đoạn trò chơi
+    current_depth = DEPTH
+    if total_material < ENDGAME_MATERIAL_THRESHOLD:
+        current_depth += 1  # Tăng độ sâu trong giai đoạn cuối
+    
     # Dùng alpha-beta để tìm nước đi tốt nhất
-    find_move_alpha_beta(game_state, valid_moves, DEPTH, -float('inf'), float('inf'), 
+    find_move_alpha_beta(game_state, valid_moves, current_depth, -float('inf'), float('inf'), 
                         1 if game_state.white_to_move else -1)
     
     if return_queue is not None:
@@ -127,7 +145,8 @@ def find_move_alpha_beta(game_state, valid_moves, depth, alpha, beta, turn_multi
     global next_move
     
     if depth == 0:
-        return turn_multiplier * score_board(game_state)
+        random_noise = random.uniform(-5, 5)
+        return turn_multiplier * score_board(game_state) + random_noise
     
     max_score = -float('inf')
     for move in valid_moves:
@@ -147,6 +166,8 @@ def find_move_alpha_beta(game_state, valid_moves, depth, alpha, beta, turn_multi
             
     return max_score
 
+position_history = {}
+
 def score_board(game_state):
     """
     Đánh giá trạng thái bàn cờ.
@@ -159,58 +180,57 @@ def score_board(game_state):
             return CHECKMATE_SCORE  # Trắng chiếu bí
     elif game_state.stalemate:
         return STALEMATE_SCORE  # Hòa
-    
+
     score = 0
     total_material = 0
-    
+
     # Tính tổng vật liệu để xác định giai đoạn của game
     for row in range(8):
         for col in range(8):
             piece = game_state.board[row][col]
             if piece != "--":
                 piece_type = piece[1]
-                if piece_type != 'K':  # Không tính vua vào tổng vật liệu
+                if piece_type != 'K':
                     total_material += piece_values[piece_type]
-    
+
     is_endgame = total_material < ENDGAME_MATERIAL_THRESHOLD
-    
+
     for row in range(8):
         for col in range(8):
             piece = game_state.board[row][col]
             if piece != "--":
                 piece_type = piece[1]
-                
-                # Điểm số dựa trên giá trị quân cờ
                 piece_score = piece_values[piece_type]
-                
-                # Thêm điểm dựa trên vị trí quân cờ
+
                 if piece_type == 'K' and is_endgame:
-                    position_score = king_scores_end_game[row][col]
+                    position_table = king_scores_end_game
                 else:
-                    position_score = piece_position_scores[piece_type][row][col]
-                
+                    position_table = piece_position_scores[piece_type]
+
                 if piece[0] == 'w':
+                    position_score = position_table[row][col]
                     score += piece_score + position_score
                 else:
+                    position_score = position_table[7 - row][col]
                     score -= piece_score + position_score
-                    # Đối với quân đen, đảo bảng giá trị vị trí
-                    if piece_type != 'K' or not is_endgame:
-                        position_score = piece_position_scores[piece_type][7-row][col]
-                    else:
-                        position_score = king_scores_end_game[7-row][col]
-    
-    # Đánh giá khả năng di chuyển
-    mobility_score = evaluate_mobility(game_state)
-    score += mobility_score
-    
-    # Đánh giá cấu trúc tốt
-    pawn_structure_score = evaluate_pawn_structure(game_state)
-    score += pawn_structure_score
-    
-    # Đánh giá an toàn của vua
-    king_safety_score = evaluate_king_safety(game_state, is_endgame)
-    score += king_safety_score
-    
+
+    # Các đánh giá bổ sung
+    score += evaluate_mobility(game_state)
+    score += evaluate_pawn_structure(game_state)
+    score += evaluate_king_safety(game_state, is_endgame)
+    score += evaluate_pawn_promotion(game_state, is_endgame)
+    score += evaluate_king_activity_endgame(game_state, is_endgame)
+
+    board_hash = str(game_state.board)
+    if board_hash in position_history:
+        position_history[board_hash] += 1
+        if position_history[board_hash] >= 3:  # Nếu vị trí xuất hiện từ 3 lần trở lên
+            return STALEMATE_SCORE  # Coi như hòa
+        else:
+            score -= 50 * position_history[board_hash]  # Giảm điểm theo số lần xuất hiện
+    else:
+        position_history[board_hash] = 1
+        
     return score
 
 def evaluate_mobility(game_state):
@@ -267,6 +287,85 @@ def evaluate_pawn_structure(game_state):
     black_protected = count_protected_pawns(game_state, black_pawns, "b")
     score += white_protected * 10
     score -= black_protected * 10
+    
+    return score
+
+def evaluate_pawn_promotion(game_state, is_endgame):
+    """
+    Đánh giá khả năng phong hậu của các quân tốt
+    """
+    score = 0
+    
+    # Hệ số nhân cho giá trị phong hậu trong cuối game
+    endgame_multiplier = 2.0 if is_endgame else 1.0
+    
+    for row in range(8):
+        for col in range(8):
+            piece = game_state.board[row][col]
+            
+            # Đánh giá tốt trắng
+            if piece == "wP":
+                # Khoảng cách đến hàng phong hậu
+                distance_to_promotion = row
+                # Điểm cộng thêm càng gần hàng phong hậu
+                promotion_value = (7 - distance_to_promotion) * (7 - distance_to_promotion) * 5
+                
+                # Kiểm tra xem có đường đi thông thoáng không
+                path_clear = True
+                for i in range(1, distance_to_promotion + 1):
+                    if row - i >= 0 and game_state.board[row - i][col] != "--":
+                        path_clear = False
+                        break
+                
+                if path_clear:
+                    promotion_value *= 2  # Nhân đôi giá trị nếu đường đi thông thoáng
+                
+                # Kiểm tra xem có quân địch có thể chặn không
+                can_be_blocked = False
+                for enemy_row in range(row-1, -1, -1):
+                    if col > 0 and game_state.board[enemy_row][col-1] == "bP":
+                        can_be_blocked = True
+                        break
+                    if col < 7 and game_state.board[enemy_row][col+1] == "bP":
+                        can_be_blocked = True
+                        break
+                
+                if not can_be_blocked:
+                    promotion_value *= 1.5  # Tăng giá trị nếu khó bị chặn
+                
+                score += promotion_value * endgame_multiplier
+            
+            # Đánh giá tốt đen
+            elif piece == "bP":
+                # Khoảng cách đến hàng phong hậu
+                distance_to_promotion = 7 - row
+                # Điểm cộng thêm càng gần hàng phong hậu
+                promotion_value = (7 - distance_to_promotion) * (7 - distance_to_promotion) * 5
+                
+                # Kiểm tra xem có đường đi thông thoáng không
+                path_clear = True
+                for i in range(1, distance_to_promotion + 1):
+                    if row + i < 8 and game_state.board[row + i][col] != "--":
+                        path_clear = False
+                        break
+                
+                if path_clear:
+                    promotion_value *= 2  # Nhân đôi giá trị nếu đường đi thông thoáng
+                
+                # Kiểm tra xem có quân địch có thể chặn không
+                can_be_blocked = False
+                for enemy_row in range(row+1, 8):
+                    if col > 0 and game_state.board[enemy_row][col-1] == "wP":
+                        can_be_blocked = True
+                        break
+                    if col < 7 and game_state.board[enemy_row][col+1] == "wP":
+                        can_be_blocked = True
+                        break
+                
+                if not can_be_blocked:
+                    promotion_value *= 1.5  # Tăng giá trị nếu khó bị chặn
+                
+                score -= promotion_value * endgame_multiplier
     
     return score
 
@@ -387,4 +486,27 @@ def evaluate_king_safety(game_state, is_endgame):
                 b_king_safety += 10
     
     score += w_king_safety - b_king_safety
+    return score
+
+KING_ACTIVITY_ENDGAME_WEIGHT = 10  # Trọng số cho hoạt động của vua trong cuối game
+
+def evaluate_king_activity_endgame(game_state, is_endgame):
+    """
+    Đánh giá hoạt động của vua trong giai đoạn cuối game
+    """
+    if not is_endgame:
+        return 0
+    
+    score = 0
+    w_king_row, w_king_col = game_state.white_king_location
+    b_king_row, b_king_col = game_state.black_king_location
+    
+    # Khuyến khích vua di chuyển đến trung tâm trong cuối game
+    w_king_center_distance = abs(w_king_row - 3.5) + abs(w_king_col - 3.5)
+    b_king_center_distance = abs(b_king_row - 3.5) + abs(b_king_col - 3.5)
+    
+    # Vua càng gần trung tâm càng tốt trong cuối game
+    score += (4 - w_king_center_distance) * KING_ACTIVITY_ENDGAME_WEIGHT
+    score -= (4 - b_king_center_distance) * KING_ACTIVITY_ENDGAME_WEIGHT
+    
     return score

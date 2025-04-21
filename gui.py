@@ -3,6 +3,7 @@ import chess_engine
 import chess_ai
 import sys
 from multiprocessing import Process, Queue
+import random
 
 BOARD_WIDTH = BOARD_HEIGHT = 400
 MOVE_LOG_PANEL_WIDTH = 250
@@ -96,13 +97,22 @@ def main():
             # Xử lý sự kiện bàn phím
             elif e.type == p.KEYDOWN:
                 if e.key == p.K_z:  # Undo khi nhấn 'z'
-                    game_state.undo_move()
+                    game_state.undo_move()  # Thực hiện undo
                     move_made = True
                     animate = False
                     game_over = False
+
+                    # Nếu AI đang suy nghĩ, thì dừng quá trình tìm kiếm nước đi của AI
                     if ai_thinking:
                         move_finder_process.terminate()
                         ai_thinking = False
+
+                    # Cập nhật lại lượt đi sau khi undo
+                    game_state.white_to_move = not game_state.white_to_move  # Lật lại lượt đi sau khi undo
+
+                    # Nếu game đang kết thúc, chúng ta cũng cần kiểm tra lại xem có phải game đã kết thúc hay chưa
+                    if game_state.checkmate or game_state.stalemate:
+                        game_over = True
                 
                 if e.key == p.K_r:  # Reset khi nhấn 'r'
                     game_state = chess_engine.GameState()

@@ -31,7 +31,9 @@ class GameState():
         self.current_castling_rights = CastleRights(True, True, True, True)
         self.castle_rights_log = [CastleRights(self.current_castling_rights.wks, self.current_castling_rights.bks,
                                               self.current_castling_rights.wqs, self.current_castling_rights.bqs)]
-
+        
+        
+    
     def make_move(self, move):
         """
         Thực hiện nước đi (không xử lý trường hợp nhập thành, phong cấp, bắt tốt qua đường)
